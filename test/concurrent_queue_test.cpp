@@ -117,10 +117,12 @@ void pop_while_push(rr::ConcurrentQueue<int>& queue) {
         v_threads.emplace_back(Push, i);
     }
     for (size_t i = 0; i < num_thd; i++)
+    // for (size_t i = 0; i < 1; i++)
     {
         v_threads.emplace_back(Pop, i);
     }
     for (auto thd = 0; thd < num_thd * 2; thd++) {
+    // for (auto thd = 0; thd < num_thd + 1; thd++) {
         v_threads[thd].join();
     }
     profiler.End();

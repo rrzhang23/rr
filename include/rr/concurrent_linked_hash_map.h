@@ -119,15 +119,14 @@ namespace rr {
 		~ConcurrentLinkedHashMap() {
 			if (!should_stop_) { should_stop_ = true; }
 			deleted_queue_.clear();
-			for (auto i = 0; i < thread_num_; i++) { async_queue_[i]->clear(); }
 			for (auto i = 0; i < thread_num_; i++) { delete async_queue_[i]; }
 		}
 
-		bool Put(const KEY& key, const VALUE& value, VALUE& prior, int thread_id = 0) { return    put(key, value, false, prior, thread_id); }
-		bool Put(const KEY& key, VALUE&& value, VALUE& prior, int thread_id = 0) { return         put(key, std::move(value), false, prior, thread_id); }
+		bool Put(const KEY& key, const VALUE& value, VALUE& prior, int thread_id = 0) { return         put(key, value, false, prior, thread_id); }
+		bool Put(const KEY& key, VALUE&& value, VALUE& prior, int thread_id = 0) { return              put(key, std::move(value), false, prior, thread_id); }
 
-		bool PutIfAbsent(const KEY& key, const VALUE& value, VALUE& prior, int thread_id = 0) { return    put(key, value, true, prior, thread_id); }
-		bool PutIfAbsent(const KEY& key, VALUE&& value, VALUE& prior, int thread_id = 0) { return         put(key, std::move(value), true, prior, thread_id); }
+		bool PutIfAbsent(const KEY& key, const VALUE& value, VALUE& prior, int thread_id = 0) { return put(key, value, true, prior, thread_id); }
+		bool PutIfAbsent(const KEY& key, VALUE&& value, VALUE& prior, int thread_id = 0) { return      put(key, std::move(value), true, prior, thread_id); }
 
 		/**
 		 * @brief

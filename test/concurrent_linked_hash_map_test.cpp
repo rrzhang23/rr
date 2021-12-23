@@ -80,6 +80,9 @@ void multi_thd_read_after_write()
     }
     profiler.End();
     cout << "ConcurrentLinkedHashMap write time: " << profiler.Micros() << endl;
+    for(auto i = 0; i < map.ThreadNum(); i++) {
+        map.AsyncQueue()[i]->check();
+    }
 
     v_thread.clear();
     profiler.Clear();
@@ -94,10 +97,9 @@ void multi_thd_read_after_write()
     }
     profiler.End();
     cout << "ConcurrentLinkedHashMap read  time: " << profiler.Micros() << endl;
-
-    // for(auto i = 0; i < map.ThreadNum(); i++) {
-    //     map.AsyncQueue()[i]->check();
-    // }
+    for(auto i = 0; i < map.ThreadNum(); i++) {
+        map.AsyncQueue()[i]->check();
+    }
     // while(1);
 }
 
@@ -171,6 +173,10 @@ void multi_thd_read_while_write()
     }
     profiler.End();
     cout << "ConcurrentLinkedHashMap total time: " << profiler.Micros() << endl;
+    
+    for(auto i = 0; i < map.ThreadNum(); i++) {
+        map.AsyncQueue()[i]->check();
+    }
 }
 
 void multi_thd_cc_hash_map()

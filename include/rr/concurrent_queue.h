@@ -220,7 +220,8 @@ namespace rr {
         // pop 时，size_-- 位置可能有问题，通过 tail_num_ - head_num_ 能看出 size_ 是否正确
         std::atomic<size_t> tail_num_;
         std::atomic<size_t> head_num_;
-        std::mutex mutex_;
+
+        std::atomic<bool> mutex_;
     public:
         bool need_thread_safe_;
 
@@ -233,6 +234,17 @@ namespace rr {
             head_ = new _node_base();
             head_->init();
             tail_ = head_;
+
+            mutex_.store(false);
+        }
+
+        ~ConcurrentQueue() {
+            clear();
+            assert(tail_ == head_);
+            delete head_;
+            // delete tail_; no need free tail
+            head_ = tail_ = nullptr;
+            mutex_.store(false);
         }
 
         template<typename... _Args>
@@ -254,6 +266,7 @@ namespace rr {
         }
 
         void push(_node_base* node) {
+            while(mutex_.load()){}
             // 单线程时，不需要cas
             if (!need_thread_safe_) {
                 node->init();
@@ -270,15 +283,18 @@ namespace rr {
                 } while (!__sync_bool_compare_and_swap(&p->_M_next, nullptr, node));
                 __sync_bool_compare_and_swap(&tail_, oldtail, node);
                 size_.fetch_add(1);
-                // tail_num_.fetch_add(1);
+                tail_num_.fetch_add(1);
             }
         }
-        bool pop() {
+        bool pop(bool internal_clear = false) {
             value_type value;
-            return pop(value);
+            return pop(value, internal_clear);
         }
 
-        bool pop(value_type& value) {
+        bool pop(value_type& value, bool internal_clear = false) {
+            if(!internal_clear) {
+                while(mutex_.load()){}
+            }
             // 单线程时，不需要
             if (!need_thread_safe_) {
                 if (head_ != tail_) {
@@ -303,20 +319,27 @@ namespace rr {
                 } while (!__sync_bool_compare_and_swap(&head_, oldhead, oldhead->_M_next));
 
                 value = ((_node*)(oldhead->_M_next))->_M_data;
-                // head_num_.fetch_add(1);
+                head_num_.fetch_add(1);
 
                 delete oldhead;
+                return true;
             }
-            return true;
         }
 
         void clear() {
-            while (!empty()) { pop(); }
+            mutex_.store(true);
+
+            while (!empty()) { pop(true); }
+            assert(size_.load() == 0);
+            assert(size_.load() == tail_num_.load() - head_num_.load());
+            mutex_.store(false);
         }
 
         void check() {
+            mutex_.store(true);
+
             assert(tail_->_M_next == nullptr);
-            // assert(tail_num_.load() - head_num_.load() == size_.load());
+            assert(tail_num_.load() - head_num_.load() == size_.load());
 
             size_t count = 0;
             for (auto iter = begin(); iter != end(); iter++) { count++; }
@@ -326,15 +349,17 @@ namespace rr {
                 std::cout << __FILE__ << ": " << __LINE__ << ", count: " << count << ",  size_:" << size_.load() << std::endl;
             }
             assert(count == size_.load());
+            mutex_.store(false);
         }
 
         void print() {
-            std::unique_lock<std::mutex> lck(mutex_);
+            mutex_.store(true);
             using namespace std;
             cout << "size: " << size_.load() << endl;
             for (auto iter = begin(); iter != end(); iter++) {
                 cout << *iter << " " << endl;
             }
+            mutex_.store(false);
         }
 
         iterator begin() { return iterator(head_->_M_next); }
