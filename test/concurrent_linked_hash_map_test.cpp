@@ -5,8 +5,8 @@
 #include <thread>
 #include <atomic>
 #include <vector>
-#include "lru_cache.h"
-#include "profiler.h"
+#include "../include/rr/concurrent_linked_hash_map.h"
+#include "../include/rr/profiler.h"
 using namespace std;
 
 #include <map>
@@ -75,7 +75,7 @@ void multi_thd_read_after_write()
         }
     };
 
-    dbx1000::Profiler profiler;
+    rr::Profiler profiler;
     profiler.Start();
     std::vector<std::thread> v_thread;
     for (auto thd = 0; thd < num_thd; thd++)
@@ -158,7 +158,7 @@ void multi_thd_read_while_write()
         }
     };
 
-    dbx1000::Profiler profiler;
+    rr::Profiler profiler;
     profiler.Start();
     std::vector<std::thread> v_thread;
 
@@ -214,7 +214,7 @@ void multi_thd_cc_hash_map()
         }
     };
 
-    dbx1000::Profiler profiler;
+    rr::Profiler profiler;
     profiler.Start();
     std::vector<std::thread> v_thread;
     for (auto thd = 0; thd < num_thd; thd++)
@@ -363,4 +363,4 @@ int main()
 
     return 0;
 }
-// g++ lru_cache_test.cpp mylist.h -o lru_cache_test -ltbb -lpthread -g
+// g++ concurrent_linked_hash_map_test.cpp -o concurrent_linked_hash_map_test.exe -ltbb -lpthread -g

@@ -8,7 +8,7 @@
 #include <map>
 #include <queue>
 #include "list.h"
-#include "mylist.h"
+#include "concurrent_queue.h"
 using namespace std;
 
 #define DEFAULT_MAX_SIZE INT64_MAX
@@ -45,7 +45,7 @@ private:
 	 * asyncQueueMutex_ 很少用
 	 */
 	enum class OP { PUT, GET, UPDATE, DEL };
-	my::ConcurrentQueue<QueueNode>** asyncQueue_;
+	rr::ConcurrentQueue<QueueNode>** asyncQueue_;
 	size_t thread_num_;
 	std::mutex asyncQueueMutex_;
 	thread asyncQueueThread_;
@@ -58,7 +58,7 @@ private:
 	std::atomic<size_t> unusedSize_;
 	std::mutex unusedListMutex_;
 
-	my::ConcurrentQueue<LRUHandle*> deleteDQueue_;
+	rr::ConcurrentQueue<LRUHandle*> deleteDQueue_;
 	std::atomic<size_t> deleteDSize_;
 	thread deleteDQueueThread_;
 
@@ -69,10 +69,12 @@ private:
 		while (process_state) {
 			for (auto i = 0; i < thread_num_; i++) {
 				if (!asyncQueue_[i]->empty()) {
-					QueueNode front = asyncQueue_[i]->pop();
-
-					std::unique_lock<std::mutex> lck(unusedListMutex_);
-					use(front);
+					QueueNode front;
+					bool res = asyncQueue_[i]->pop(front);
+					if(res) {
+						std::unique_lock<std::mutex> lck(unusedListMutex_);
+						use(front);
+					}
 				}
 				else {
 					// sleep(1);
@@ -104,11 +106,11 @@ public:
 		assert(unusedSize_ <= maxSize_);
 		maxSize_ = max_size;
 
-		asyncQueue_ = new my::ConcurrentQueue<QueueNode>*[thread_num_];
+		asyncQueue_ = new rr::ConcurrentQueue<QueueNode>*[thread_num_];
 		for (auto i = 0; i < thread_num_; i++) {
-			asyncQueue_[i] = new my::ConcurrentQueue<QueueNode>(true);
+			asyncQueue_[i] = new rr::ConcurrentQueue<QueueNode>(true);
 			assert(asyncQueue_[i] != nullptr);
-			assert(asyncQueue_[i]->head_.load() != nullptr);
+			// assert(asyncQueue_[i]->head_.load() != nullptr);
 		}
 		std::cout << thread_num_ << " cores" << std::endl;
 
@@ -178,7 +180,7 @@ public:
 
 	int ThreadNum() { return this->thread_num_; }
 
-	my::ConcurrentQueue<QueueNode>**& AsyncQueue() { return asyncQueue_; }
+	rr::ConcurrentQueue<QueueNode>**& AsyncQueue() { return asyncQueue_; }
 private:
 	/**
 	 * @brief
