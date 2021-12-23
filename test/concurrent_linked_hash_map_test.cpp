@@ -11,43 +11,35 @@ using namespace std;
 
 #include <map>
 
-int process_state = 1; // 1 == on running
-
 int global_num_thd = 10;
 int global_batch = 100000;
 
 void single_test()
 {
-    process_state = 1;
-    ConcurrentLinkedHashMap<int, int> map(1);
-    int value;
-    assert(true == map.Put(1, 1, value, 0));
-    assert(true == map.Put(2, 2, value, 0));
-    int a = map.Get(1, value, 0);
-    map.Print();
+    class A {
+    public:
+        A() { cout << "A()" << endl; }
+        A(const A& a) { cout << "const A&" << endl; }
+        A(A&& a) { cout << "A&&" << endl; }
+        A* operator=(const A& a) { cout << "const A& operator=" << endl; }
+        A* operator=(A&& a) { cout << "A&& operator=" << endl; }
+    };
+    rr::ConcurrentLinkedHashMap<int, A> map(5);
+    A res;
+    A a;
+    map.Put(1, a, res);
 
-    int *v1 = new int();
-    int *v2 = new int();
-    *v1 = 1;
-    *v2 = 2;
-    ConcurrentLinkedHashMap<int, int *> map_ptr(3);
-    int *v_p;
-    bool is_new = map_ptr.Put(1, v1, v_p, 0);
-    assert(true == map_ptr.Put(2, v2, v_p, 0));
-    bool find = map_ptr.Get(1, v_p, 0);
-    map_ptr.Remove(1, v_p);
-    map_ptr.Print();
-    process_state = 0;
+    cout << endl << endl;
+
+    A b;
+    map.Put(2, std::move(b), res);
 }
 
 void multi_thd_read_after_write()
 {
-    // using iterator = ConcurrentLinkedHashMap<int, int>::accessor;
-    // using const_iterator = ConcurrentLinkedHashMap<int, int>::const_accessor;
-    process_state = 1;
     int batch = global_batch;
     int num_thd = global_num_thd;
-    ConcurrentLinkedHashMap<int, int> map(batch * num_thd / 2);
+    rr::ConcurrentLinkedHashMap<int, int> map(batch * num_thd / 2);
 
     auto Write = [&map, batch](int thd_id) -> void
     {
@@ -107,17 +99,13 @@ void multi_thd_read_after_write()
     //     map.AsyncQueue()[i]->check();
     // }
     // while(1);
-    process_state = 0;
 }
 
 void multi_thd_read_while_write()
 {
-    using iterator = ConcurrentLinkedHashMap<int, int>::accessor;
-    using const_iterator = ConcurrentLinkedHashMap<int, int>::const_accessor;
-    process_state = 1;
     int batch = global_batch;
     int num_thd = global_num_thd;
-    ConcurrentLinkedHashMap<int, int> map(batch * num_thd / 2);
+    rr::ConcurrentLinkedHashMap<int, int> map(batch * num_thd / 2);
 
     auto Write = [&map, batch](int thd_id) -> void
     {
@@ -183,23 +171,21 @@ void multi_thd_read_while_write()
     }
     profiler.End();
     cout << "ConcurrentLinkedHashMap total time: " << profiler.Micros() << endl;
-
-    process_state = 0;
 }
 
 void multi_thd_cc_hash_map()
 {
     int batch = global_batch;
     int num_thd = global_num_thd;
-    tbb::concurrent_hash_map<int, int *> map;
+    tbb::concurrent_hash_map<int, int*> map;
 
     auto Write = [&map, batch](int thd_id) -> void
     {
         bool has_res;
         for (int i = thd_id * batch; i < (thd_id + 1) * batch; i++)
         {
-            tbb::concurrent_hash_map<int, int *>::accessor acc;
-            int *a = new int();
+            tbb::concurrent_hash_map<int, int*>::accessor acc;
+            int* a = new int();
             *a = i;
             map.insert(acc, make_pair(i, a));
         }
@@ -209,7 +195,7 @@ void multi_thd_cc_hash_map()
         bool has_res;
         for (int i = 0; i < num_thd * batch; i++)
         {
-            tbb::concurrent_hash_map<int, int *>::const_accessor acc;
+            tbb::concurrent_hash_map<int, int*>::const_accessor acc;
             map.find(acc, i);
         }
     };
@@ -245,16 +231,16 @@ void multi_thd_cc_hash_map()
 
 void test_concurrent_hash_map()
 {
-    tbb::concurrent_hash_map<int, int *> map;
-    int *v1 = new int(), *v2 = new int();
+    tbb::concurrent_hash_map<int, int*> map;
+    int* v1 = new int(), * v2 = new int();
     *v1 = 1;
     *v2 = 2;
     map.insert(make_pair(1, v1));
     map.insert(make_pair(2, v2));
-    int *res = nullptr;
+    int* res = nullptr;
     for (int i = 0; i < 1; i++)
     {
-        tbb::concurrent_hash_map<int, int *>::accessor acc;
+        tbb::concurrent_hash_map<int, int*>::accessor acc;
         bool find = map.find(acc, 1);
         cout << "find: " << find << endl;
         res = acc->second;
@@ -268,14 +254,14 @@ void test_concurrent_hash_map()
     }
     cout << "res: " << *res << endl;
 
-    tbb::concurrent_hash_map<int, int *>::accessor acce;
-    int *v3 = new int();
+    tbb::concurrent_hash_map<int, int*>::accessor acce;
+    int* v3 = new int();
     *v3 = 3;
     bool insert = map.insert(acce, 2);
     cout << "insert 2: " << (insert ? "new" : "old") << ", value: " << *(acce->second) << endl;
 }
 
-tbb::concurrent_hash_map<int, int *> globalMap;
+tbb::concurrent_hash_map<int, int*> globalMap;
 std::atomic<bool> flag1;
 std::atomic<bool> flag2;
 std::atomic<bool> flag3;
@@ -286,13 +272,13 @@ void fun1()
     {
         if (flag2.load())
         {
-            tbb::concurrent_hash_map<int, int *>::accessor acce;
+            tbb::concurrent_hash_map<int, int*>::accessor acce;
             // bool find = globalMap.find(acce, 1);
             // cout << "fun1 find 1: " << find << ", map[1]: " << *(acce->second) << endl;
             bool insert = globalMap.insert(acce, 1);
             cout << "fun1 insert 1: " << insert << endl;
             cout << "fun1 old value: " << *(acce->second) << endl;
-            int *v = new int();
+            int* v = new int();
             *v = 2;
             acce->second = v;
             cout << "fun1 inserted value: " << *(acce->second) << endl;
@@ -308,10 +294,10 @@ void fun2()
     {
         if (flag1.load())
         {
-            tbb::concurrent_hash_map<int, int *>::accessor acce;
+            tbb::concurrent_hash_map<int, int*>::accessor acce;
             bool res = globalMap.insert(acce, 1);
             cout << "fun2 insert 1: " << res << endl;
-            int *v = new int();
+            int* v = new int();
             *v = 1;
             acce->second = v;
             cout << "fun2 inserted value: " << *(acce->second) << endl;
@@ -324,7 +310,7 @@ void fun2()
     {
         if (flag3.load())
         {
-            tbb::concurrent_hash_map<int, int *>::accessor acce;
+            tbb::concurrent_hash_map<int, int*>::accessor acce;
             bool find = globalMap.find(acce, 1);
             cout << "fun2 find 1: " << find << ", map[1]: " << *(acce->second) << endl;
             break;
@@ -337,30 +323,31 @@ int main()
      * @brief fun1 and fun2，测试map的插入删除
      *
      */
-    // {
-    //     flag1.store(false);
-    //     flag2.store(false);
-    //     flag3.store(false);
-    //     flag4.store(false);
+     // {
+     //     flag1.store(false);
+     //     flag2.store(false);
+     //     flag3.store(false);
+     //     flag4.store(false);
 
-    //     thread t1(fun1);
-    //     thread t2(fun2);
-    //     flag1.store(1);
-    //     t1.join();
-    //     t2.join();
-    // }
+     //     thread t1(fun1);
+     //     thread t2(fun2);
+     //     flag1.store(1);
+     //     t1.join();
+     //     t2.join();
+     // }
 
-    // single_test();
-    // cout << endl << endl;
+    {
+        single_test();
+    }
+    {
+        multi_thd_read_after_write();
+        cout << endl << endl;
 
-    multi_thd_read_after_write();
-    cout << endl << endl;
+        multi_thd_read_while_write();
+        cout << endl << endl;
 
-    // multi_thd_read_while_write();
-    // cout << endl << endl;
-
-    multi_thd_cc_hash_map();
-
+        multi_thd_cc_hash_map();
+    }
     return 0;
 }
 // g++ concurrent_linked_hash_map_test.cpp -o concurrent_linked_hash_map_test.exe -ltbb -lpthread -g

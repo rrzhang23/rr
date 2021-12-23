@@ -164,7 +164,7 @@ int main() {
     pop_while_push(queue);
     queue.clear();
 
-    // simple_test();
+    simple_test();
     // queue.print();
 
     return 0;

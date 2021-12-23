@@ -1,5 +1,5 @@
-#ifndef MYLISH_H
-#define MYLISH_H
+#ifndef CONCURRENT_QUEUE_H
+#define CONCURRENT_QUEUE_H
 
 #include <atomic>
 #include <cassert>
@@ -34,12 +34,12 @@ namespace rr {
         _Tp const* _M_valptr() const { return std::__addressof(_M_data); }
 
 
-        list_node(const _Tp& t) {
-            this->_M_data = t; init();
+        list_node(const _Tp& t) : _M_data(t) {
+            init();
             // std::cout << __FILE__ << ", " << __LINE__ << std::endl;
         }
-        list_node(_Tp&& t) {
-            this->_M_data = std::move(t); init();
+        list_node(_Tp&& t) : _M_data(std::move(t)) {
+            init();
             // std::cout << __FILE__ << ", " << __LINE__ << std::endl;
         }
         // list_node* operator=(_Tp&& t)
@@ -353,4 +353,4 @@ namespace rr {
     };
 }
 
-#endif // MYLISH_H
+#endif // CONCURRENT_QUEUE_H
