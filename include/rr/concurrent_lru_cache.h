@@ -90,11 +90,7 @@ namespace rr {
 		}
 
 		bool GetNewPage(Page& page) {
-			cout << "GetNewPage: " << __LINE__ << endl; 
 			while (free_list_size_ <= 0) {}
-			// assert(free_list_.pop(page));
-			// return true;
-			cout << "GetNewPage: " << __LINE__ << endl; 
 
 			bool res = free_list_.pop(page);
 			if (res) { free_list_size_.fetch_sub(1); }
@@ -110,6 +106,7 @@ namespace rr {
 				cout << "key: " << iter->first << ", value: " << string((char*)iter->second->value(), item_bytes_) << endl;
 			}
 
+			cout << "free_list_     : " << endl;
 			for (auto iter = free_list_.begin(); iter != free_list_.end(); iter++, count_list++) {
 				cout << "key: " << iter->key_ << ", value: " << string((char*)iter->ptr_, item_bytes_) << endl;
 			}
