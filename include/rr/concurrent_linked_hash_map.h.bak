@@ -14,142 +14,29 @@
 #include "concurrent_queue.h"
 using namespace std;
 
-#define DEFAULT_MAX_SIZE SIZE_MAX
+#define DEFAULT_MAX_SIZE INT64_MAX
 
 namespace rr {
-	class Hint {
-	public:
-		virtual void Delete(void* arg1) = 0;
-		virtual void New(void* arg1) = 0;
-	};
-
-	template <typename KEY, typename VALUE, class Manager = Hint, typename Allocator = std::allocator<std::pair<KEY, VALUE>>>
-	class ConcurrentLinkedHashMap;
-
-
-	namespace con_map {
-		template<typename KEY, typename VALUE, class Manager>
-		class HandleBase {
-		public:
-			template<typename K, typename V, class M, typename A> friend class ConcurrentLinkedHashMap;
-			/* or: */
-			// friend class ConcurrentLinkedHashMap<KEY, VALUE, Manager>;
-			typedef ConcurrentLinkedHashMap<KEY, VALUE, Manager> Map;
-
-			virtual ~HandleBase() {};
-
-			HandleBase(Map* map, const KEY& k, const VALUE& v) : mapParent_(map), key_(k), value_(v), weight_(1) {}
-			HandleBase(Map* map, const KEY& k, VALUE&& v) : mapParent_(map), key_(k), value_(std::move(v)), weight_(1) {}
-
-			const HandleBase& operator=(const HandleBase& handle) = delete;
-			const HandleBase& operator=(HandleBase&& handle) = delete;
-			HandleBase(const HandleBase& handle) = delete;
-			HandleBase(HandleBase&& handle) = delete;
-			HandleBase() = delete;
-
-		protected:
-			Map* mapParent_;
-			KEY key_;
-			VALUE value_;
-			int weight_;
-		public:
-			VALUE& value() { return value_; }
-			KEY& key() { return key_; }
-		};
-
-		template<typename KEY, typename VALUE, class Manager>
-		class Handle : public HandleBase<KEY, VALUE, Manager> {
-		public:
-			template<typename K, typename V, typename M, typename A> friend class ConcurrentLinkedHashMap;
-			typedef ConcurrentLinkedHashMap<KEY, VALUE, Manager> Map;
-			typedef typename ConcurrentLinkedHashMap<KEY, VALUE, Manager>::QueueNode QueueNode;
-			using handle_base_type = HandleBase<KEY, VALUE, Manager>;
-
-		private:
-			::list_node node_;
-			QueueNode* queueNode_;
-		protected:
-
-		public:
-			void copy(::list_node* node) {
-				if (node->next == node) {
-					assert(node->prev == node);
-					INIT_LIST_HEAD(node);
-				}
-				else {
-					::list_node* prev = node->prev;
-					::list_node* next = node->next;
-					this->node.prev = prev;
-					prev->next = this->node;
-					this->node.next = next;
-					next->prev = this->node;
-				}
-			}
-
-			virtual ~Handle() {
-				node_.prev = nullptr;
-				node_.next = nullptr;
-				// no need free mapParent_ and queueNode_
-			}
-
-			Handle(Map* map, const KEY& k, const VALUE& v) : handle_base_type::HandleBase(map, k, v) {
-				INIT_LIST_HEAD(&node_);
-			}
-
-
-			Handle(Map* map, const KEY& k, VALUE&& v) : handle_base_type::HandleBase(map, k, std::move(v)) {
-				INIT_LIST_HEAD(&node_);
-			}
-
-			const Handle& operator=(const Handle& handle) = delete;
-			// {
-			// 	INIT_LIST_HEAD(&node);
-			// 	this->mapParent_ = handle.mapParent_;
-			// 	this->key = handle.key;
-			// 	copy(&handle.node);
-			// 	return *this;
-			// }
-			const Handle& operator=(Handle&& handle) = delete;
-			Handle(const Handle& handle) = delete;
-			// {
-			// 	INIT_LIST_HEAD(&node);
-			// 	this->mapParent_ = handle.mapParent_;
-			// 	this->key = handle.key;
-			// 	copy(&handle.node);
-			// }
-			Handle() = delete;
-		};
-	}
-
-	template <typename KEY, typename VALUE, class Manager, typename Allocator>
+	template <typename KEY, typename VALUE>
 	class ConcurrentLinkedHashMap {
 	public:
-		template<typename K, typename V, typename M> friend class HandleBase;
+		struct LRUHandle;
+		friend LRUHandle;
+		struct QueueNode;
 
-		typedef KEY key_type;
-		typedef VALUE value_type;
-
-		/* or: */
-		// typedef Handle<KEY, VALUE> Handle_type;
-		// typedef tbb::concurrent_hash_map<KEY, Handle*> ConcurrentMap;
-		// typedef typename ConcurrentMap::accessor accessor;
-		// typedef typename ConcurrentMap::const_accessor const_accessor;
-		using handle_base_type = con_map::HandleBase<KEY, VALUE, Manager>;
-		using handle_type = con_map::Handle<KEY, VALUE, Manager>;
-		using ConcurrentMap = tbb::concurrent_hash_map<KEY, handle_base_type*>;
+		typedef std::pair<const KEY, VALUE> value_type;
+		using ConcurrentMap = tbb::concurrent_hash_map<KEY, LRUHandle*>;
 		using accessor = typename ConcurrentMap::accessor;
 		using const_accessor = typename ConcurrentMap::const_accessor;
 
+		// LRUHandle* deleted;
 
-	public:
-		struct QueueNode;
 
 	private:
-		Manager* manager_;
 		bool should_stop_;
 
-		// 上层接口同步修改 map_，被删除的节点会放到异步驱逐队列 deleted_queue_, Handle* 被后台线程 delete；put 时 Handle* 被 new
-		tbb::concurrent_hash_map<KEY, handle_base_type*> map_;
+		// 上层接口同步修改 map_，被删除的节点会放到异步驱逐队列 deleted_queue_, LRUHandle* 被后台线程 delete；put 时 LRUHandle* 被 new
+		tbb::concurrent_hash_map<KEY, LRUHandle*> map_;
 		size_t max_size_{ DEFAULT_MAX_SIZE };
 
 		/**
@@ -171,7 +58,7 @@ namespace rr {
 		std::atomic<size_t> in_use_list_size_;
 		std::mutex in_use_list_mutex_;
 
-		rr::ConcurrentQueue<handle_base_type*> deleted_queue_;
+		rr::ConcurrentQueue<LRUHandle*> deleted_queue_;
 		std::atomic<size_t> deleted_size_;
 		thread deleted_queue_thread_;
 
@@ -211,14 +98,6 @@ namespace rr {
 		// }
 
 	public:
-
-	static char OPToChar(OP op){
-		if(op == OP::PUT) { return 'P'; }
-		if(op == OP::GET) { return 'G'; }
-		if(op == OP::DEL) { return 'D'; }
-		if(op == OP::UPDATE) { return'U'; }
-		return 'N';
-	}
 
 		ConcurrentLinkedHashMap() { ConcurrentLinkedHashMap(SIZE_MAX); };
 		ConcurrentLinkedHashMap(size_t max_size) : in_use_list_size_(0), thread_num_(std::thread::hardware_concurrency())
@@ -261,7 +140,7 @@ namespace rr {
 		bool Remove(const KEY& key, VALUE& prior, int thread_id = 0) {
 			accessor acc;
 			bool find = map_.find(acc, key);
-			handle_base_type* handle = nullptr;
+			LRUHandle* handle = nullptr;
 			if (find) {
 				handle = acc->second;
 				bool deleted = map_.erase(acc);
@@ -280,7 +159,7 @@ namespace rr {
 			if (find) {
 				// if (!c_access->second->weightedValue_->isAlive()) { return false; }
 				if (c_access->second->weight_ == 0) { return false; }
-				afterTask(const_cast<handle_base_type*>(c_access->second), OP::GET, thread_id);
+				afterTask(const_cast<LRUHandle*>(c_access->second), OP::GET, thread_id);
 				// result = c_access->second->weightedValue_->value_;
 				result = c_access->second->value_;
 			}
@@ -302,11 +181,8 @@ namespace rr {
 		}
 
 		int ThreadNum() { return this->thread_num_; }
-		rr::ConcurrentQueue<QueueNode>**& AsyncQueue() { return async_queue_; }
-		std::mutex& in_use_list_mutex() { return in_use_list_mutex_; }
-		tbb::concurrent_hash_map<KEY, handle_base_type*>& map() { return map_; }
-		Manager*& manager() { return manager_; }
 
+		rr::ConcurrentQueue<QueueNode>**& AsyncQueue() { return async_queue_; }
 	private:
 		/**
 		 * @brief
@@ -321,15 +197,10 @@ namespace rr {
 		 */
 		template<typename _Arg>
 		bool put(const KEY& key, _Arg&& value, bool onlyIfAbsent, VALUE& prior, int thread_id) {
-			if (in_use_list_size_.load() >= (max_size_ - 2)) {
-				std::unique_lock<std::mutex> lck(in_use_list_mutex_);
-				evict();
-			}
-
 			accessor acc;
 			bool is_new = map_.insert(acc, key);
 			if (is_new) {
-				handle_base_type* handle = new handle_type(this, key, std::forward<_Arg>(value));
+				LRUHandle* handle = new LRUHandle(this, key, std::forward<_Arg>(value));
 				assert(acc->second == nullptr);
 				acc->second = handle;
 				afterTask(acc->second, OP::PUT, thread_id);
@@ -337,7 +208,6 @@ namespace rr {
 			}
 			else if (onlyIfAbsent) {	// 仅读旧值，不写
 				prior = acc->second->value_;
-				return is_new;
 			}
 			// 需要更新 is_new==false, and onlyIfAbsent==false
 			prior = acc->second->value_;
@@ -360,37 +230,31 @@ namespace rr {
 		// need lock in_use_list_mutex_ before call this
 		// 头部表示最老的，尾部是最新的
 		void use(QueueNode& node) {
-						node.Print();
-			cout << "use: " << __LINE__ << endl;
-			if (!node.handle_exist_) { return; }
-			cout << "use: " << __LINE__ << endl;
-			handle_type* handle = (handle_type*)(node.handle_);
+			if (node.handle_exist_ == false) { return; }
+
 			if (node.op_ == OP::PUT) {
 				evict();
 				assert(node.handle_->weight_ > 0);
 				if (node.handle_->weight_ > 0) {
-					list_add_tail(&handle->node_, &in_use_list_);
+					list_add_tail(&node.handle_->node_, &in_use_list_);
 					in_use_list_size_.fetch_add(1);
-					cout << "in_use_list_size_: " << in_use_list_size_.load() << endl;
 				}
-				evict();
 			}
 			else if (node.op_ == OP::GET) {
 				assert(node.handle_->weight_ > 0);
 				if (node.handle_->weight_ > 0) {
-					if (nodeInList(&handle->node_)) { list_move_tail(&handle->node_, &in_use_list_); }
+					if (nodeInList(&node.handle_->node_)) { list_move_tail(&node.handle_->node_, &in_use_list_); }
 				}
 			}
 			else if (node.op_ == OP::DEL) {
 				assert(node.handle_->weight_ == 0);
-				if (nodeInList(&handle->node_)) {
-					list_del(&handle->node_);
-					::list_node* tmp = &handle->node_;
+				if (nodeInList(&node.handle_->node_)) {
+					list_del(&node.handle_->node_);
+					::list_node* tmp = &node.handle_->node_;
 					tmp->prev = tmp->next = tmp;
 				}
 
 				node.handle_exist_ = false;
-				manager_->Delete(handle);
 				delete node.handle_;
 				node.handle_ = nullptr;
 			}
@@ -406,7 +270,7 @@ namespace rr {
 					first->prev = first->next = first;
 					in_use_list_size_.fetch_sub(1);
 				}
-				handle_type* handle = list_entry(first, handle_type, node_);
+				LRUHandle* handle = list_entry(first, LRUHandle, node_);
 
 				accessor acc;
 				bool find = map_.find(acc, handle->key_);
@@ -417,24 +281,22 @@ namespace rr {
 				}
 				handle->weight_ = 0;
 				handle->queueNode_->handle_exist_ = false;
-				manager_->Delete(handle);
 				delete handle;
 				handle = nullptr;
 			}
 		}
 
-		void afterTask(handle_base_type* handle, OP op, int thread_id) {
+		void afterTask(LRUHandle* handle, OP op, int thread_id) {
 			QueueNode node(handle, op);
 			// async_queue_[syscall(SYS_gettid) % thread_num_]->push(std::move(node));
 			async_queue_[thread_id % thread_num_]->push(std::move(node));
-			node.Print();
 		}
 
 	public:
 		struct QueueNode {
 		public:
-			QueueNode(handle_base_type* handle, OP op) : handle_(handle), op_(op), handle_exist_(true) {
-				((handle_type*)(handle_))->queueNode_ = this;
+			QueueNode(LRUHandle* handle, OP op) : handle_(handle), op_(op), handle_exist_(true) {
+				handle_->queueNode_ = this;
 			};
 			QueueNode& operator=(const QueueNode& node) {
 				this->handle_ = node.handle_;
@@ -453,22 +315,75 @@ namespace rr {
 			~QueueNode() { /* no need free handle_*/ }
 
 
-			handle_base_type* handle_;
+			LRUHandle* handle_;
 			OP op_;
 			/**
 			 * @brief 多个线程指向同一个 handle_ 时，只要有一个线程 delete handle_，
 			 * 其他线程不能用 if(handle_ == nullptr) 判断，只能通过 handle_exist_ 判断 handle_ 是否被释放
 			 */
 			bool handle_exist_;
-			void Print() {
-				cout << "handle_exist_: " << (handle_exist_ ? "true" : "false");
-				if(handle_exist_) {
-					cout << "OP: " << ConcurrentLinkedHashMap::OPToChar(op_) << ", key: " << handle_->key_ << ", value: " << (char*)handle_->value_ << endl;
-				} else {
-					cout << endl;
-				}
-			}
 		};
+	};
+
+	template <typename KEY, typename VALUE>
+	struct ConcurrentLinkedHashMap<KEY, VALUE>::LRUHandle {
+		friend class ConcurrentLinkedHashMap<KEY, VALUE>;
+	public:
+		~LRUHandle() {
+			node_.prev = nullptr;
+			node_.next = nullptr;
+			// no need free mapParent_ and queueNode_
+		}
+
+		LRUHandle(ConcurrentLinkedHashMap* map, const KEY& k, const VALUE& value) : mapParent_(map), key_(k), value_(value), weight_(1) {
+			INIT_LIST_HEAD(&node_);
+		}
+
+		LRUHandle(ConcurrentLinkedHashMap* map, const KEY& k, VALUE&& value) : mapParent_(map), key_(k), value_(std::move(value)), weight_(1) {
+			INIT_LIST_HEAD(&node_);
+		}
+
+		// void copy(::list_node* node) {
+		// 	if(node->next == node) {
+		// 		assert(node->prev == node);
+		// 		INIT_LIST_HEAD(node);
+		// 	} else {
+		// 		::list_node* prev = node->prev;
+		// 		::list_node* next = node->next;
+		// 		this->node.prev = prev;
+		// 		prev->next = this->node;
+		// 		this->node.next = next;
+		// 		next->prev = this->node;
+		// 	}
+		// }
+		const LRUHandle& operator=(const LRUHandle& handle) = delete;
+		// {
+		// 	INIT_LIST_HEAD(&node);
+		// 	this->mapParent_ = handle.mapParent_;
+		// 	this->key = handle.key;
+		// 	copy(&handle.node);
+		// 	return *this;
+		// }
+		LRUHandle(const LRUHandle& handle) = delete;
+		// {
+		// 	INIT_LIST_HEAD(&node);
+		// 	this->mapParent_ = handle.mapParent_;
+		// 	this->key = handle.key;
+		// 	copy(&handle.node);
+		// }
+		LRUHandle(LRUHandle&& handle) = delete;
+		LRUHandle() = delete;
+
+
+	private:
+		ConcurrentLinkedHashMap* mapParent_;
+		KEY key_;
+		VALUE value_;
+		::list_node node_;
+		QueueNode* queueNode_;
+		int weight_;
+
+		friend ConcurrentLinkedHashMap;
 	};
 }
 
