@@ -120,6 +120,7 @@ namespace rr {
 			Page page(h->key(), h->value(), this);
 			free_list_.emplace_push(page);
 			free_list_size_.fetch_add(1);
+			// std::cout << "recycle: " << ((char*)h->value()-(char*)ptr_) << endl;
 		}
 		virtual void New(void* handle) {}
 	};

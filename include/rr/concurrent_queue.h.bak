@@ -222,35 +222,35 @@ namespace rr {
         std::atomic<size_t> tail_num_;
         std::atomic<size_t> head_num_;
 
-
+        
         std::thread async_queue_thread_;
         _node_base* fake_head_;
         bool should_stop_;
-        bool shutdown_;
 
         std::atomic<bool> mutex_;
     public:
 
-        void set_stop() { should_stop_ = true; }
+        void set_stop() { should_stop_ = true; 
+        }
         bool can_del() {
             if (fake_head_ == head_ || fake_head_ == tail_) return false;
             return true;
         }
         void thd() {
-            while (can_del())
+            while (!should_stop_)
             {
-                if (should_stop_) break;
-                _node_base* p = fake_head_;
-                fake_head_ = fake_head_->_M_next;
-                p->_M_next = nullptr; delete p;
+                while (can_del()) {
+                    _node_base* p = fake_head_;
+                    fake_head_ = fake_head_->_M_next;
+                    p->_M_next = nullptr; delete p;
+                }
             }
-            shutdown_ = true;
         }
         bool need_thread_safe_;
 
         ConcurrentQueue() { ConcurrentQueue(true); };
 
-        ConcurrentQueue(bool need_thread_safe) : need_thread_safe_(need_thread_safe), should_stop_(false), shutdown_(false) {
+        ConcurrentQueue(bool need_thread_safe) : need_thread_safe_(need_thread_safe), should_stop_(false) {
             size_.store(0);
             tail_num_.store(0);
             head_num_.store(0);
@@ -266,7 +266,6 @@ namespace rr {
         }
 
         ~ConcurrentQueue() {
-            while (!shutdown_);
             clear();
             assert(tail_ == head_);
             delete head_;
@@ -351,23 +350,12 @@ namespace rr {
             }
         }
 
-        // void clear() {
-        //     mutex_.store(true);
-
-        //     while (!empty()) { pop(true); }
-        //     assert(size_.load() == 0);
-        //     assert(size_.load() == tail_num_.load() - head_num_.load());
-        //     mutex_.store(false);
-        // }
-
         void clear() {
             mutex_.store(true);
-            head_ = tail_;
-            while (can_del()) {
-                _node_base* p = fake_head_;
-                fake_head_ = fake_head_->_M_next;
-                p->_M_next = nullptr; delete p;
-            }
+
+            while (!empty()) { pop(true); }
+            assert(size_.load() == 0);
+            assert(size_.load() == tail_num_.load() - head_num_.load());
             mutex_.store(false);
         }
 

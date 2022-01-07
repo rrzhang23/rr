@@ -10,12 +10,12 @@
 using namespace std;
 
 int global_num_thd = 32;
-int global_batch = 10;
+int global_batch = 10000;
 
 void simple_test() {
     rr::LRUCache cache(100, 10);
 
-    for (auto key = 0; key < 12; key++) {
+    for (auto key = 0; key < 13; key++) {
         rr::lru_cache::Page page;
         cache.GetNewPage(page);
         page.key_ = key;
@@ -29,6 +29,7 @@ void multi_thd_read_after_write() {
     int batch = global_batch;
     int num_thd = global_num_thd;
     rr::LRUCache  cache(batch * num_thd / 2 * 10, 10);
+    // rr::LRUCache  cache(batch * num_thd * 10, 10);
 
     auto Write = [&cache, batch](int thd_id) -> void
     {
