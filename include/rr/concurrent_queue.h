@@ -4,8 +4,9 @@
 #include <atomic>
 #include <cassert>
 #include <iostream>
-#include <mutex>
 #include <cstring>
+#include <thread>
+#include <chrono>
 
 
 namespace rr {
@@ -222,35 +223,44 @@ namespace rr {
         std::atomic<size_t> tail_num_;
         std::atomic<size_t> head_num_;
 
-
+        // 在初始版本中，pop 后直接删除前一个节点，这会使最后 check() 函数不通过，即从 head_ 到 tail_ 计数不等于 size_
+        // 于是便在后台异步删除被 pop 的节点，fake_head_ 到 head_ 之间的节点都是内存存在，但是对外不可见的。
         std::thread async_queue_thread_;
         _node_base* fake_head_;
-        bool should_stop_;
-        bool shutdown_;
+        bool should_stop_;  // 父线程/进程退出，此时不再需要后台删除
+        bool has_shutdown_; // 表示后台线程成功退出，可以正常析构，不然要等后台线程退出才能析构
 
+        // 不用 std::mutex 的原因是，只有内部函数才能上锁，而 thd、pop、push是不能上锁的，这几个函数同时上锁对性能有影响
+        // thd、pop、push 只能等待 mutex_ 被释放，因为内部函数要么非做不可，要么时间很短。
         std::atomic<bool> mutex_;
     public:
 
         void set_stop() { should_stop_ = true; }
+
+        // 表示 fake_head_ 和 head_ 之间有节点需要被删除
         bool can_del() {
             if (fake_head_ == head_ || fake_head_ == tail_) return false;
             return true;
         }
         void thd() {
-            while (can_del())
-            {
-                if (should_stop_) break;
-                _node_base* p = fake_head_;
-                fake_head_ = fake_head_->_M_next;
-                p->_M_next = nullptr; delete p;
+            while (!should_stop_) {
+                while (mutex_.load()) {}    // 可能有 bug
+                if(can_del()) {
+                    
+                    _node_base* p = fake_head_;
+                    fake_head_ = fake_head_->_M_next;
+                    p->_M_next = nullptr; delete p;
+                } else {
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
             }
-            shutdown_ = true;
+            has_shutdown_ = true;
         }
         bool need_thread_safe_;
 
-        ConcurrentQueue() { ConcurrentQueue(true); };
+        ConcurrentQueue() { ConcurrentQueue(true); }
 
-        ConcurrentQueue(bool need_thread_safe) : need_thread_safe_(need_thread_safe), should_stop_(false), shutdown_(false) {
+        ConcurrentQueue(bool need_thread_safe) : need_thread_safe_(need_thread_safe), should_stop_(false), has_shutdown_(false) {
             size_.store(0);
             tail_num_.store(0);
             head_num_.store(0);
@@ -266,13 +276,19 @@ namespace rr {
         }
 
         ~ConcurrentQueue() {
-            while (!shutdown_);
+            should_stop_ = true;
+            // 需要等后台线程成功退出
+            while (!has_shutdown_);
+            should_stop_ = true;
             clear();
             assert(tail_ == head_);
+            check();
+
             delete head_;
             // delete tail_; no need free tail
             head_ = tail_ = nullptr;
             mutex_.store(false);
+            // std::cout << "~ConcurrentQueue()" << ", " << __FILE__ << ", " << __LINE__ << std::endl;
         }
 
         template<typename... _Args>
@@ -301,6 +317,7 @@ namespace rr {
                 tail_->_M_next = node;
                 tail_ = node;
                 size_.fetch_add(1);
+                tail_num_.fetch_add(1);
             }
             else {
                 node->init();
@@ -328,6 +345,7 @@ namespace rr {
                 if (head_ != tail_) {
                     head_ = head_->_M_next;
                     size_.fetch_sub(1);
+                    head_num_.fetch_add(1);
                     value = ((_node*)(head_))->_M_data;
                     return true;
                 }
@@ -335,7 +353,7 @@ namespace rr {
             }
             else {
                 if (size_.load() <= 0) { return false; }
-                _node_base* oldhead;
+                _node_base* oldhead = head_;
                 do {
                     oldhead = head_;
                     if (size_.load() < 0) { assert(false); }
@@ -351,36 +369,37 @@ namespace rr {
             }
         }
 
-        // void clear() {
-        //     mutex_.store(true);
-
-        //     while (!empty()) { pop(true); }
-        //     assert(size_.load() == 0);
-        //     assert(size_.load() == tail_num_.load() - head_num_.load());
-        //     mutex_.store(false);
-        // }
-
         void clear() {
             mutex_.store(true);
-            head_ = tail_;
+
+            while (!empty()) { pop(true); }
+            assert(head_ == tail_);
+            assert(size_.load() == 0);
+            assert(size_.load() == tail_num_.load() - head_num_.load());
+
             while (can_del()) {
                 _node_base* p = fake_head_;
                 fake_head_ = fake_head_->_M_next;
                 p->_M_next = nullptr; delete p;
             }
+            assert(fake_head_ == head_);
             mutex_.store(false);
         }
 
+        // 检查 tail_num_-head_num_ 是否等于 size_，
+        // 检查 从 head_ 到 tail_, 数量是否等于 size_
         void check() {
             mutex_.store(true);
 
             assert(tail_->_M_next == nullptr);
-            assert(tail_num_.load() - head_num_.load() == size_.load());
+            if(size_.load() != tail_num_.load() - head_num_.load()) {
+                std::cout << "size: " << size_ << ", tail-num: " << tail_num_.load() - head_num_.load() << std::endl;
+                assert(false);
+            }
 
             size_t count = 0;
             for (auto iter = begin(); iter != end(); iter++) { count++; }
 
-            std::cout << __FILE__ << ": " << __LINE__ << ", ConcurrentQueue::check(), count: " << count << std::endl;
             if (count != size_.load()) {
                 std::cout << __FILE__ << ": " << __LINE__ << ", count: " << count << ",  size_:" << size_.load() << std::endl;
             }
@@ -410,6 +429,7 @@ namespace rr {
 
         size_t size() {
             return size_.load();
+            // return (tail_num_.load() - head_num_.load());
         }
     };
 }

@@ -12,7 +12,7 @@ using namespace std;
 
 #include <map>
 
-int global_num_thd = 32;
+int global_num_thd = 28;
 int global_batch = 10000;
 
 void single_test()
@@ -36,12 +36,11 @@ void single_test()
     map.Put(2, std::move(b), res);
 }
 
-void multi_thd_read_after_write()
-{
+void read_after_write(double den = 1) {
+    // cout << "read_after_write     , " << __FILE__ << ", " << __LINE__ << endl;
     int batch = global_batch;
     int num_thd = global_num_thd;
-    // rr::ConcurrentLinkedHashMap<int, int> map(batch * num_thd / 2);
-    rr::ConcurrentLinkedHashMap<int, int> map(batch * num_thd);
+    rr::ConcurrentLinkedHashMap<int, int>* map = new rr::ConcurrentLinkedHashMap<int, int>(batch * num_thd / den);
 
     auto Write = [&map, batch](int thd_id) -> void
     {
@@ -49,10 +48,10 @@ void multi_thd_read_after_write()
         for (int i = thd_id * batch; i < (thd_id + 1) * batch; i++)
         {
             int res;
-            bool is_new = map.Put(i, i, res, thd_id);
+            bool is_new = map->Put(i, i, res, thd_id);
+            // bool is_new = map->Put(i, i, res);
             if (!is_new)
                 assert(res >= 0);
-            // cout << i << endl;
         }
     };
     auto Read = [&map, num_thd, batch](int thd_id) -> void
@@ -61,10 +60,11 @@ void multi_thd_read_after_write()
         for (int i = 0; i < num_thd * batch; i++)
         {
             int res;
-            bool find = map.Get(i, res, thd_id);
+            bool find = map->Get(i, res, thd_id);
+            // bool find = map->Get(i, res);
+            // bool find = map->GetQuietly(i, res);
             if (find)
-                assert(res >= 0);
-            // map.getQuietly(i, has_res);
+                assert(res == i);
             // cout << i << endl;
         }
     };
@@ -82,9 +82,7 @@ void multi_thd_read_after_write()
     }
     profiler.End();
     cout << "ConcurrentLinkedHashMap write time: " << profiler.Micros() << endl;
-    // for(auto i = 0; i < map.ThreadNum(); i++) {
-    //     map.AsyncQueue()[i]->check();
-    // }
+    map->check();
 
     v_thread.clear();
     profiler.Clear();
@@ -99,17 +97,18 @@ void multi_thd_read_after_write()
     }
     profiler.End();
     cout << "ConcurrentLinkedHashMap read  time: " << profiler.Micros() << endl;
-    // for(auto i = 0; i < map.ThreadNum(); i++) {
-    //     map.AsyncQueue()[i]->check();
-    // }
-    // while(1);
+    map->check();
+    // cout << "read_after_write     , " << __FILE__ << ", " << __LINE__ << endl;
+    delete map;
+    // cout << "read_after_write done, " << __FILE__ << ", " << __LINE__ << endl;
 }
 
-void multi_thd_read_while_write()
+void read_while_write(bool with_delete = true, double den = 1)
 {
+    // cout << "read_while_write     , " << __FILE__ << ", " << __LINE__ << endl;
     int batch = global_batch;
     int num_thd = global_num_thd;
-    rr::ConcurrentLinkedHashMap<int, int> map(batch * num_thd / 2);
+    rr::ConcurrentLinkedHashMap<int, int>* map = new rr::ConcurrentLinkedHashMap<int, int>(batch * num_thd / den);
 
     auto Write = [&map, batch](int thd_id) -> void
     {
@@ -117,7 +116,8 @@ void multi_thd_read_while_write()
         for (int i = thd_id * batch; i < (thd_id + 1) * batch; i++)
         {
             int res;
-            bool is_new = map.Put(i, i, res, i);
+            bool is_new = map->Put(i, i, res, thd_id);
+            // bool is_new = map->Put(i, i, res);
             if (!is_new)
                 assert(res >= 0);
             // cout << i << endl;
@@ -129,10 +129,11 @@ void multi_thd_read_while_write()
         for (int i = 0; i < num_thd * batch; i++)
         {
             int res;
-            bool find = map.Get(i, res, i);
+            bool find = map->Get(i, res, thd_id);
+            // bool find = map->Get(i, res);
+            // bool find = map->GetQuietly(i, res);
             if (find)
                 assert(res >= 0);
-            // map.getQuietly(i, has_res);
             // cout << i << endl;
         }
     };
@@ -142,11 +143,10 @@ void multi_thd_read_while_write()
         for (int i = 0; i < num_thd * batch; i++)
         {
             int res;
-            bool find = map.Remove(i, res, i);
+            bool find = map->Remove(i, res, thd_id);
+            // bool find = map->Remove(i, res);
             if (find)
                 assert(res >= 0);
-            // map.getQuietly(i, has_res);
-            // cout << i << endl;
         }
     };
 
@@ -154,31 +154,26 @@ void multi_thd_read_while_write()
     profiler.Start();
     std::vector<std::thread> v_thread;
 
-    for (auto thd = 0; thd < num_thd; thd++)
-    {
+    for (auto thd = 0; thd < num_thd; thd++) {
         v_thread.emplace_back(Write, thd);
     }
-    for (auto thd = 0; thd < num_thd; thd++)
-    {
+    for (auto thd = 0; thd < num_thd; thd++) {
         v_thread.emplace_back(Read, thd);
     }
-    // for(auto thd = 0; thd < num_thd*2; thd++) {
-    //     v_thread[thd].join();
-    // }
-    for (auto thd = 0; thd < num_thd; thd++)
-    {
-        v_thread.emplace_back(Delete, thd);
+    if(!with_delete) {
+        for (auto thd = 0; thd < num_thd * 2; thd++) { v_thread[thd].join(); }
     }
-    for (auto thd = 0; thd < num_thd * 3; thd++)
-    {
-        v_thread[thd].join();
+    else {
+        for (auto thd = 0; thd < num_thd; thd++) { v_thread.emplace_back(Delete, thd); }
+        for (auto thd = 0; thd < num_thd * 3; thd++) { v_thread[thd].join(); }
     }
     profiler.End();
     cout << "ConcurrentLinkedHashMap total time: " << profiler.Micros() << endl;
-    
-    // for(auto i = 0; i < map.ThreadNum(); i++) {
-    //     map.AsyncQueue()[i]->check();
-    // }
+    // cout << "read_while_write     , " << __FILE__ << ", " << __LINE__ << endl;
+    map->check();
+    // cout << "read_while_write     , " << __FILE__ << ", " << __LINE__ << endl;
+    delete map;
+    // cout << "read_while_write done, " << __FILE__ << ", " << __LINE__ << endl;
 }
 
 void multi_thd_cc_hash_map()
@@ -344,19 +339,21 @@ int main()
      //     t2.join();
      // }
 
+    // {
+    //     single_test();
+    // }
     {
-        single_test();
-    }
-    {
-        multi_thd_read_after_write();
+        read_after_write(2);
+        cout << endl << endl;
+        read_while_write(2);
         cout << endl << endl;
 
-        multi_thd_read_while_write();
+        read_after_write();
         cout << endl << endl;
-
+        read_while_write();
         multi_thd_cc_hash_map();
     }
     return 0;
 }
-// g++ concurrent_linked_hash_map_test.cpp -o concurrent_linked_hash_map_test.exe -ltbb -lpthread -g 
-// g++ concurrent_linked_hash_map_test.cpp -o concurrent_linked_hash_map_test.exe -ltbb -lpthread -O3 –DNDEBUG
+// g++ linked_hash_map_test.cpp -o linked_hash_map_test.exe -ltbb -lpthread -g 
+// g++ linked_hash_map_test.cpp -o linked_hash_map_test.exe -ltbb -lpthread -O3 –DNDEBUG
