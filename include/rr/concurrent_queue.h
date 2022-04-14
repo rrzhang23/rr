@@ -181,7 +181,6 @@ namespace rr {
          * @brief 单向链表，没有 prev
          */
          /*
-         /*
          _Self& operator--() {
              _M_node = _M_node->_M_prev;
              return *this;
@@ -260,7 +259,7 @@ namespace rr {
 
         ConcurrentQueue() { ConcurrentQueue(true); }
 
-        ConcurrentQueue(bool need_thread_safe) : need_thread_safe_(need_thread_safe), should_stop_(false), has_shutdown_(false) {
+        ConcurrentQueue(bool need_thread_safe) : should_stop_(false), has_shutdown_(false), need_thread_safe_(need_thread_safe) {
             size_.store(0);
             tail_num_.store(0);
             head_num_.store(0);

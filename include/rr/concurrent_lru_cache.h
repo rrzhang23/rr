@@ -3,9 +3,10 @@
 
 #include<sys/mman.h>
 #include "concurrent_linked_hash_map.h"
+#include "config.h"
 using namespace std;
 
-#define PAGE_SIZE (16 * 1024)
+// #define PAGE_SIZE (16 * 1024)
 namespace rr {
 	namespace lru_cache {
 		class LRUCache;
@@ -22,6 +23,8 @@ namespace rr {
 			size_t size_;
 			std::atomic<size_t> ref_;
 			LRUCache* cache_;
+			uint64_t used_size_;
+			uint64_t version_;
 
 			virtual size_t Ref() override { return ref_.fetch_add(1); }
 			size_t Unref() { return ref_.fetch_sub(1); }
@@ -36,11 +39,11 @@ namespace rr {
 				, size_(0), cache_(cache) {
 				ref_.store(0);
 			}
-			Page(uint64_t key, LRUCache* cache) : handle_type::Handle(nullptr, key, nullptr)
+			Page(uint64_t page_id, LRUCache* cache) : handle_type::Handle(nullptr, page_id, nullptr)
 				, size_(0), cache_(cache) {
 				ref_.store(0);
 			}
-			Page(uint64_t key, void* ptr, LRUCache* cache);
+			Page(uint64_t page_id, void* ptr, LRUCache* cache, uint64_t used_size = 3, uint64_t version = 0);
 
 			virtual void Delete();
 
@@ -73,15 +76,15 @@ namespace rr {
 				memcpy(handle_type::value_, (void*)(&(handle_type::key_)), sizeof(uint64_t));
 			}
 
-			void set(const uint64_t& key, void* ptr) {
-				set_key(key);
+			void set(const uint64_t& page_id, void* ptr) {
+				set_key(page_id);
 				handle_type::value_ = ptr;
 				size_ = PAGE_SIZE;
 				memcpy(handle_type::value_, (void*)(&(handle_type::key_)), sizeof(uint64_t));
 			}
 
-			void set_key(const uint64_t& key) {
-				handle_type::key_ = key;
+			void set_key(const uint64_t& page_id) {
+				handle_type::key_ = page_id;
 			}
 
 			void set_id(const uint64_t& id) {
@@ -91,6 +94,19 @@ namespace rr {
 
 			void Print() {
 				cout << "key: " << handle_type::key_ << ", ptr: " << *(uint64_t*)(handle_type::value_) << ", " << __FILE__ << ", " << __LINE__ << endl;
+			}
+
+			bool AddRow(void* row_date, size_t row_size) {
+				if(used_size_ + row_size > PAGE_SIZE) {
+					return false;
+				} else {
+					char* location = ((char*)handle_type::value_)+used_size_;
+					memcpy(location, row_date, row_size);
+					used_size_ += row_size;
+					assert(used_size_ <= PAGE_SIZE);
+					memcpy(((char*)handle_type::value_)+sizeof(uint64_t), &used_size_, sizeof(uint64_t));
+					return true;
+				}
 			}
 		};
 
@@ -111,9 +127,9 @@ namespace rr {
 		public:
 			LRUCache(size_t max_bytes, size_t item_bytes) :
 				// cmap_(max_bytes / item_bytes), 
-				max_bytes_(max_bytes)
+				free_list_(true)
+				, max_bytes_(max_bytes)
 				, item_bytes_(item_bytes)
-				, free_list_(true)
 			{
 				free_list_size_.store(max_bytes / item_bytes);
 				// cout << "free_list_size_: " << free_list_size_ << ", max_bytes: " << max_bytes << ", item_bytes: " << item_bytes << endl;
@@ -123,7 +139,7 @@ namespace rr {
 				cmap_->manager() = this;
 				std::unique_lock<std::mutex> lck(cmap_->in_use_list_mutex());
 				char* cursor = (char*)ptr_;
-				for (auto i = 0; i < free_list_size_; i++) {
+				for (size_t i = 0; i < free_list_size_; i++) {
 					free_list_.push((handle_type*)(new Page(UINT64_MAX, cursor, this)));
 					cursor += item_bytes_;
 				}
@@ -231,7 +247,7 @@ namespace rr {
 
 			void PrintRef() {
 				sleep(3);
-				size_t count_map = 0, count_list = 0;
+				size_t count_list = 0;
 				for (auto iter = cmap_->map().begin(); iter != cmap_->map().end(); iter++) {
 					cout << "int_ref: " << iter->second->InternalRefSize() << ", ref: " << iter->second->RefSize() << endl;
 				}
@@ -244,22 +260,6 @@ namespace rr {
 				cout << "PrintRef done, " << __FILE__ << ", " << __LINE__ << endl;
 			}
 		};
-
-		void Page::Delete() {
-			handle_type* h = (handle_type*)this;
-			// assert(this->ref_.load() == 0);
-			assert(h->RefSize() == 0 && h->InternalRefSize() == 0);
-			this->set_key(UINT64_MAX);
-			this->init();
-			cache_->free_list_.emplace_push(h);
-			cache_->free_list_size_.fetch_add(1);
-			cache_->cmap_->size_of_newhandle_.fetch_sub(1);
-		}
-
-		Page::Page(uint64_t key, void* ptr, LRUCache* cache) : handle_type::Handle(cache->cmap_, key, ptr)
-			, size_(PAGE_SIZE), cache_(cache) {
-			ref_.store(0);
-		}
 	}
 	using namespace lru_cache;
 }

@@ -147,9 +147,9 @@ namespace rr {
 			// 由 LRUCache 继承，当前空间释放由子类决定，父类默认会释放当前 this 指针
 			virtual void Delete();
 
-			Handle(Map* map, const KEY& k, const VALUE& v) : mapParent_(map), key_(k), value_(v) { internal_ref_.store(0); init(); }
+			Handle(Map* map, const KEY& k, const VALUE& v) : key_(k), value_(v), mapParent_(map) { internal_ref_.store(0); init(); }
 
-			Handle(Map* map, const KEY& k, VALUE&& v) : mapParent_(map), key_(k), value_(std::move(v)) { internal_ref_.store(0); init(); }
+			Handle(Map* map, const KEY& k, VALUE&& v) : key_(k), value_(std::move(v)), mapParent_(map) { internal_ref_.store(0); init(); }
 
 			const Handle& operator=(const Handle& handle) = delete;
 			// {
@@ -235,7 +235,7 @@ namespace rr {
 				int count = 0;
 
 				while (!should_stop_) {
-					for (auto i = 0; i < thread_num_; i++) {
+					for (size_t i = 0; i < thread_num_; i++) {
 						QueueNode front;
 						bool res = async_queue_[i]->pop(front);
 						if (res) {
@@ -275,11 +275,13 @@ namespace rr {
 
 		public:
 			ConcurrentLinkedHashMap() { ConcurrentLinkedHashMap(SIZE_MAX); };
-			ConcurrentLinkedHashMap(size_t max_size) : in_use_list_size_(0), thread_num_(std::thread::hardware_concurrency())
+			ConcurrentLinkedHashMap(size_t max_size) : 
 				// , deleted_queue_(true)
+				manager_(nullptr)
 				, should_stop_(false)
 				, has_shutdown_(false)
-				, manager_(nullptr) {
+				, thread_num_(std::thread::hardware_concurrency())
+				, in_use_list_size_(0) {
 				INIT_LIST_HEAD(&in_use_list_);
 				INIT_LIST_HEAD(&deleted_queue_);
 				deleted_size_.store(0);
@@ -288,7 +290,7 @@ namespace rr {
 				max_size_ = max_size;
 
 				async_queue_ = new rr::ConcurrentQueue<QueueNode>*[thread_num_];
-				for (auto i = 0; i < thread_num_; i++) {
+				for (size_t i = 0; i < thread_num_; i++) {
 					async_queue_[i] = new rr::ConcurrentQueue<QueueNode>(true);
 					assert(async_queue_[i] != nullptr);
 				}
@@ -304,7 +306,7 @@ namespace rr {
 
 				// 需要等后台线程成功退出
 				while (!has_shutdown_);
-				for (auto i = 0; i < thread_num_; i++) {
+				for (size_t i = 0; i < thread_num_; i++) {
 					assert(async_queue_[i]->size() == 0);
 					// QueueNode front;
 					// while(async_queue_[i]->pop(front)) {
@@ -312,8 +314,8 @@ namespace rr {
 					// }
 				}
 
-				for (auto i = 0; i < thread_num_; i++) { async_queue_[i]->set_stop(); }
-				for (auto i = 0; i < thread_num_; i++) { delete async_queue_[i]; }
+				for (size_t i = 0; i < thread_num_; i++) { async_queue_[i]->set_stop(); }
+				for (size_t i = 0; i < thread_num_; i++) { delete async_queue_[i]; }
 				check();
 				clear_map();
 
